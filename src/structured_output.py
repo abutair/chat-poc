@@ -25,29 +25,32 @@ def handle_structured_output(response_str, sheets) -> str:
                     if not is_code_safe(code):
                         raise ValueError("❌ Unsafe code detected in value_code.")
                     
-                    # Create a safe execution environment with limited globals
-                    safe_globals = {
-                        "__builtins__": {
-                            "True": True, "False": False, "None": None,
-                            "abs": abs, "bool": bool, "dict": dict, "float": float,
-                            "int": int, "len": len, "list": list, "max": max, "min": min,
-                            "range": range, "round": round, "str": str, "sum": sum,
-                            "tuple": tuple, "type": type
-                        }
-                    }
-                    
-                    # Add pandas with proper imports for datetime functionality
-                    safe_locals = {
-                        "sheets": sheets, 
+                    # Create a namespace for code execution
+                    namespace = {
                         "pd": pd,
-                        "datetime": pd.datetime,
-                        "Timestamp": pd.Timestamp
+                        "sheets": sheets,
+                        "datetime": pd.to_datetime,
+                        "Timestamp": pd.Timestamp,
+                        "result": None
                     }
                     
-                    value = eval(code, safe_globals, safe_locals)
-                    final_text = output["template"].format(value=value)
+                    # Execute code directly
+                    exec(code, None, namespace)
+                    
+                    # Get the result from the last expression
+                    value = namespace.get("result")
+                    if value is None and "df" in namespace:
+                        # If result wasn't assigned but df was created
+                        value = namespace["df"]
+                    
+                    # Apply the template with the value
+                    if "template" in output and "{value}" in output["template"]:
+                        final_text = output["template"].replace("{value}", str(value))
+                    else:
+                        final_text = output.get("template", str(value))
                 else:
-                    final_text = output["template"]
+                    final_text = output.get("template", "")
+                
                 st.markdown(final_text)
                 return final_text
 
@@ -56,30 +59,24 @@ def handle_structured_output(response_str, sheets) -> str:
                 if not is_code_safe(code):
                     raise ValueError("❌ Unsafe code detected in table code.")
                 
-                # Create a safe execution environment
-                safe_globals = {
-                    "__builtins__": {
-                        "True": True, "False": False, "None": None,
-                        "abs": abs, "bool": bool, "dict": dict, "float": float,
-                        "int": int, "len": len, "list": list, "max": max, "min": min,
-                        "range": range, "round": round, "str": str, "sum": sum,
-                        "tuple": tuple, "type": type
-                    }
-                }
-                
-                # Add pandas with proper imports
-                safe_locals = {
-                    "sheets": sheets, 
+                # Create a namespace for code execution
+                namespace = {
                     "pd": pd,
-                    "datetime": pd.to_datetime,
+                    "sheets": sheets,
+                    "datetime": pd.Timestamp.now().to_pydatetime().__class__,  # Use Python's datetime
                     "Timestamp": pd.Timestamp,
                     "timedelta": pd.Timedelta,
                     "to_datetime": pd.to_datetime,
                     "to_timedelta": pd.to_timedelta,
-                    "NaT": pd.NaT
+                    "NaT": pd.NaT,
+                    "df": None
                 }
                 
-                df = eval(code, safe_globals, safe_locals)
+                # Execute the code directly
+                exec(code, None, namespace)
+                
+                # Get the DataFrame result
+                df = namespace["df"]
                 
                 # Check if we got a DataFrame
                 if not isinstance(df, pd.DataFrame):
@@ -93,8 +90,18 @@ def handle_structured_output(response_str, sheets) -> str:
                 # If it's an error-style DataFrame
                 elif 'Error' in df.columns and len(df.columns) == 1:
                     st.error(df['Error'].iloc[0])
-                # Normal DataFrame
+                # Normal DataFrame - limit size to avoid MessageSizeError
                 else:
+                    # Limit to at most 1000 rows to prevent memory issues
+                    if len(df) > 1000:
+                        st.warning(f"Showing only the first 1000 rows out of {len(df)} total rows.")
+                        df = df.head(1000)
+                    
+                    # For very wide dataframes, limit columns too
+                    if len(df.columns) > 30:
+                        st.warning(f"Showing only the first 30 columns out of {len(df.columns)} total columns.")
+                        df = df.iloc[:, :30]
+                    
                     st.dataframe(df)
                 
                 return f"Table: {output.get('title', 'Untitled')}"
@@ -104,30 +111,24 @@ def handle_structured_output(response_str, sheets) -> str:
                 if not is_code_safe(code):
                     raise ValueError("❌ Unsafe code detected in chart code.")
                 
-                # Create a safe execution environment
-                safe_globals = {
-                    "__builtins__": {
-                        "True": True, "False": False, "None": None,
-                        "abs": abs, "bool": bool, "dict": dict, "float": float,
-                        "int": int, "len": len, "list": list, "max": max, "min": min,
-                        "range": range, "round": round, "str": str, "sum": sum,
-                        "tuple": tuple, "type": type
-                    }
-                }
-                
-                # Add pandas with proper imports
-                safe_locals = {
-                    "sheets": sheets, 
+                # Create a namespace for code execution
+                namespace = {
                     "pd": pd,
-                    "datetime": pd.datetime,
+                    "sheets": sheets,
+                    "datetime": pd.Timestamp.now().to_pydatetime().__class__,  # Use Python's datetime
                     "Timestamp": pd.Timestamp,
                     "timedelta": pd.Timedelta,
                     "to_datetime": pd.to_datetime,
                     "to_timedelta": pd.to_timedelta,
-                    "NaT": pd.NaT
+                    "NaT": pd.NaT,
+                    "df": None
                 }
                 
-                df = eval(code, safe_globals, safe_locals)
+                # Execute the code directly
+                exec(code, None, namespace)
+                
+                # Get the DataFrame result
+                df = namespace["df"]
                 
                 # Check if we got a DataFrame
                 if not isinstance(df, pd.DataFrame):
@@ -146,6 +147,11 @@ def handle_structured_output(response_str, sheets) -> str:
                     return f"Chart: {output.get('title', 'Untitled')} (Error)"
                 
                 st.markdown(f"### {output.get('title', 'Chart')}")
+                
+                # Limit the data size for charts
+                if len(df) > 1000:
+                    st.warning(f"Chart data limited to 1000 rows (from {len(df)} total).")
+                    df = df.head(1000)
                 
                 chart_type = output.get("kind", "bar")
                 x = output["x"]
@@ -168,10 +174,24 @@ def handle_structured_output(response_str, sheets) -> str:
                 # Generate the appropriate chart type
                 try:
                     if chart_type == "bar":
+                        # For bar charts, limit to top 50 values if there are too many categories
+                        if len(df) > 50:
+                            st.warning(f"Showing top 50 {y} values (from {len(df)} total).")
+                            df = df.nlargest(50, y)
                         st.bar_chart(df.set_index(x)[y])
                     elif chart_type == "line":
                         st.line_chart(df.set_index(x)[y])
                     elif chart_type == "pie":
+                        # For pie charts, limit to top 15 categories
+                        if len(df) > 15:
+                            st.warning(f"Showing top 15 {y} values (from {len(df)} total).")
+                            top_n = df.nlargest(14, y)
+                            others = pd.DataFrame({
+                                x: ['Others'],
+                                y: [df[~df[x].isin(top_n[x])][y].sum()]
+                            })
+                            df = pd.concat([top_n, others])
+                        
                         fig, ax = plt.subplots()
                         ax.pie(df[y], labels=df[x], autopct='%1.1f%%', startangle=90)
                         ax.axis('equal')  # Equal aspect ratio ensures the pie is a circle.
