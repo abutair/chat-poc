@@ -1,3 +1,7 @@
 
 data/
 env
+.env
+.venv/
+.idea/
+/src/__pycache__

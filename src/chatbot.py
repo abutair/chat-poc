@@ -1,20 +1,7 @@
 # chatbot.py
-# V36
-# We added embedding Model I think. I still need to test if it works
-# We are fixing up the memory py files and moving the prompts into their own files.
-# Removed the API Key hardcoding
+# V41
 #
-# Pls pls pls be fixed 🤞🤞
-#
-# It should be fixed? 🥴
-#
-# It fixed
-#
-###############################################################
-# LLM FOR TESTING   =   llama3-8b-8192              <----- Can have a log of errors when responding
-# LLM FOR WORKING   =   llama-3.3-70b-versatile
-# Warning: Watch out for Rate Limits or price for running
-###############################################################
+# SQL instead of pandas
 
 # Here is a Complete Emoji for Completed Tasks:    ✅
 
@@ -23,7 +10,7 @@ from dotenv import load_dotenv
 import logging
 import streamlit as st
 from load_file import load_filetype
-from gen_code import generate_pandas_code
+from gen_code import generate_sql_prompt
 from structured_output import handle_structured_output
 from chat_memory import init_memory, save_memory, clear_memory, build_context
 from semantic_memory import save_message_embedding
@@ -38,8 +25,8 @@ env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 load_dotenv(dotenv_path=env_path)
 
 # Dataset path
-file_path = os.getenv("EXCEL_FILE")
-all_sheets = load_filetype(file_path)
+file_path = os.getenv("DB_FILE")  # Update your .env to use DB_FILE
+preview_rows = load_filetype(file_path)     # Renamed for clarity
 
 # Ensure logs folder exists
 os.makedirs("../logs", exist_ok=True)
@@ -93,7 +80,7 @@ for sender, msg in st.session_state.chat_history:
         if sender == "user":
             st.markdown(f"**You:** {msg}")
         else:
-            handle_structured_output(msg, all_sheets)
+            handle_structured_output(msg, db_path=file_path)
 
 # Chat input with built-in Send button
 if prompt := st.chat_input("Ask a question about your data..."):
@@ -117,7 +104,7 @@ if prompt := st.chat_input("Ask a question about your data..."):
     with st.spinner("🤖 Generating response..."):
         for attempt in range(1, MAX_RETRIES + 2):
             try:
-                response = generate_pandas_code(prior_messages, all_sheets)
+                response = generate_sql_prompt(prior_messages, preview_rows)
                 chatbot_output = response
                 logging.info("Received response from LLM.")
                 break  # ✅ Success, exit loop
@@ -131,7 +118,7 @@ if prompt := st.chat_input("Ask a question about your data..."):
 
     # Show messages immediately
     with st.chat_message("bot", avatar=BOT_AVATAR):
-        rendered_output = handle_structured_output(chatbot_output, all_sheets)
+        rendered_output = handle_structured_output(chatbot_output, db_path=file_path)
         logging.info("Bot response rendered successfully.")
     # Save bot message to semantic memory
     save_message_embedding("assistant", chatbot_output)
