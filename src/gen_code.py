@@ -1,46 +1,55 @@
+# gen_code.py
+
 from dotenv import load_dotenv
-import os
+from string import Template
 from llm_config import client, llm_model
 
 load_dotenv()
 
 def load_prompt_template(file_path="prompts/prompt_template.txt"):
     with open(file_path, "r") as file:
-        template_content = file.read()
-        return template_content
+        return Template(file.read())
 
-
-def generate_pandas_code(messages, sheets):
-    # print("gen_code.py run success")
+def generate_sql_prompt(messages, sheets):
     sample = ""
 
-    # Take a preview from each sheet in the Excel file
-    for sheet_name, df in sheets.items():
-        sample += f"--- {sheet_name} ---\n"
-        sample += df.head(3).to_string(index=False) + "\n"
+    # Format the preview of each table (up to 3 rows) from the list of dicts
+    for table_name, rows in sheets.items():
+        sample += f"--- {table_name} ---\n"
+        if not rows:
+            sample += "(no data available)\n"
+            continue
 
-    sheet_names = list(sheets.keys())
+        # Get column names from the first row
+        columns = list(rows[0].keys())
+        # Create a tabular preview string manually
+        header_line = " | ".join(columns)
+        sample += header_line + "\n"
+        sample += "-" * len(header_line) + "\n"
+
+        for row in rows:
+            line = " | ".join(str(row.get(col, "")) for col in columns)
+            sample += line + "\n"
+
     prompt_template = load_prompt_template()
 
-    # NOTE TO SELF: Be very careful editing this prompt. I have to modify it a lot so that the chatbot understands things better
-    # Generate the actual prompt by replacing placeholders
     try:
-        # Format the latest message (i.e., current question) with full Excel context
         latest_question = messages[-1]["content"]
-        
-        # Use format() instead of Template.substitute() for safer string formatting
-        formatted_prompt = prompt_template.replace("$sheet_names", str(sheet_names))
-        formatted_prompt = formatted_prompt.replace("$sample_data", sample)
-        formatted_prompt = formatted_prompt.replace("$user_input", latest_question)
-        
+        formatted_prompt = prompt_template.substitute(
+            sheet_names=", ".join(sheets.keys()),
+            sample_data=sample.strip(),
+            user_input=latest_question
+        )
         messages[-1]["content"] = formatted_prompt
-    except Exception as e:
-        raise ValueError(f"Error formatting prompt template: {e}")
+    except KeyError as e:
+        raise ValueError(f"Prompt template is missing a placeholder: {e}")
+    except ValueError as e:
+        raise ValueError(f"String substitution error in prompt template: {e}")
 
     response = client.chat.completions.create(
         model=llm_model,
         messages=messages,
         max_tokens=512
-        # ⚠️ Change this to be dynamic later or configurable in .env
     )
+
     return response.choices[0].message.content.strip()
