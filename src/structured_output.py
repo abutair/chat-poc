@@ -88,8 +88,8 @@ def handle_structured_output(response_str, db_path: str) -> str:
         except Exception as e:
             logging.error(f"Structured output rendering failed: {e}")
             st.error("⚠️ Error while displaying output.")
-            with st.expander("Show Debug Info"):
-                st.code(str(output), language="json")
+            # with st.expander("Show Debug Info"):
+            #     st.code(str(output), language="json")
             return f"[Render error: {e}]"
 
     # Parse and render output
@@ -98,8 +98,8 @@ def handle_structured_output(response_str, db_path: str) -> str:
     except json.JSONDecodeError as e:
         logging.error(f"Failed to parse JSON: {e}\nRaw: {response_str}")
         st.error("⚠️ Invalid response format.")
-        with st.expander("Show Raw Response"):
-            st.code(response_str, language="json")
+        # with st.expander("Show Raw Response"):
+        #     st.code(response_str, language="json")
         return "[Invalid JSON]"
 
     if isinstance(parsed, list):
