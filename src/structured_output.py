@@ -1,26 +1,35 @@
-# structured_output.py
-
 import streamlit as st
-import sqlite3
 import json
 import logging
 import matplotlib.pyplot as plt
+from load_file import get_azure_connection
 
-# 🚫 Blacklist of unsafe keywords
-SQL_BLACKLIST = ['DROP', 'DELETE', 'ATTACH', 'DETACH', 'ALTER', ';', '--', 'PRAGMA']
+SQL_BLACKLIST = ['DROP', 'DELETE', 'ATTACH', 'DETACH', 'ALTER', ';', '--', 'PRAGMA', 'EXEC', 'EXECUTE', 'INSERT', 'UPDATE']
 
 
-def handle_structured_output(response_str, db_path: str) -> str:
+def handle_structured_output(response_str) -> str:
 
     def execute_sql(query):
+        """Execute SQL query on Azure SQL Database"""
         if any(bad in query.upper() for bad in SQL_BLACKLIST):
             raise ValueError("❌ Unsafe SQL query detected.")
-        with sqlite3.connect(db_path) as conn:
+        
+        try:
+            conn = get_azure_connection()
             cursor = conn.cursor()
             cursor.execute(query)
-            columns = [desc[0] for desc in cursor.description]
+            
+            columns = [column[0] for column in cursor.description]
+            
             rows = cursor.fetchall()
+            
+            rows = [tuple(row) for row in rows]
+            
+            conn.close()
             return columns, rows
+            
+        except Exception as e:
+            raise Exception(f"Database query failed: {str(e)}")
 
     def render_single_output(output):
         try:
@@ -54,27 +63,36 @@ def handle_structured_output(response_str, db_path: str) -> str:
                 y_key = output["y"]
                 kind = output.get("kind", "bar")
 
-                x_vals = [row[columns.index(x_key)] for row in rows]
-                y_vals = [row[columns.index(y_key)] for row in rows]
+                try:
+                    x_idx = columns.index(x_key)
+                    y_idx = columns.index(y_key)
+                except ValueError:
+                    st.error(f"Column not found. Available columns: {columns}")
+                    return "Chart: Error"
+
+                x_vals = [row[x_idx] for row in rows]
+                y_vals = [row[y_idx] for row in rows]
 
                 if kind == "bar":
-                    fig, ax = plt.subplots(figsize=(8, 4))
+                    fig, ax = plt.subplots(figsize=(10, 6))
                     ax.bar(x_vals, y_vals, color='#00b4d8')
                     ax.set_xlabel(x_key)
                     ax.set_ylabel(y_key)
                     ax.set_title(output.get("title", "Chart"))
                     plt.xticks(rotation=45, ha='right')
+                    plt.tight_layout()
                     st.pyplot(fig)
                 elif kind == "line":
-                    fig, ax = plt.subplots(figsize=(8, 4))
+                    fig, ax = plt.subplots(figsize=(10, 6))
                     ax.plot(x_vals, y_vals, marker='o', linestyle='-', color='#00b4d8')
                     ax.set_xlabel(x_key)
                     ax.set_ylabel(y_key)
                     ax.set_title(output.get("title", "Chart"))
                     plt.xticks(rotation=45, ha='right')
+                    plt.tight_layout()
                     st.pyplot(fig)
                 elif kind == "pie":
-                    fig, ax = plt.subplots()
+                    fig, ax = plt.subplots(figsize=(8, 8))
                     ax.pie(y_vals, labels=x_vals, autopct='%1.1f%%', startangle=90)
                     ax.axis('equal')
                     st.pyplot(fig)
@@ -90,9 +108,9 @@ def handle_structured_output(response_str, db_path: str) -> str:
             st.error("⚠️ Error while displaying output.")
             with st.expander("Show Debug Info"):
                 st.code(str(output), language="json")
+                st.code(f"Error: {str(e)}")
             return f"[Render error: {e}]"
 
-    # Parse and render output
     try:
         parsed = json.loads(response_str)
     except json.JSONDecodeError as e:

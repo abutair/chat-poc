@@ -1,79 +1,75 @@
-# semantic_memory.py (fixed)
 
-import os
-import json
 import numpy as np
-from dotenv import load_dotenv
+import streamlit as st
 from embedding_client import embedding_client, embedding_model
 
-load_dotenv()
-
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SEMANTIC_MEMORY_FILE = os.path.join(PROJECT_ROOT, "memory", "semantic_memory.json")
-
 def init_semantic_memory():
-    """Ensure semantic memory file exists."""
-    os.makedirs(os.path.join(PROJECT_ROOT, "memory"), exist_ok=True)
-    if not os.path.exists(SEMANTIC_MEMORY_FILE):
-        with open(SEMANTIC_MEMORY_FILE, "w") as f:
-            json.dump([], f)
+    """Initialize in-memory semantic storage."""
+    if "semantic_memory" not in st.session_state:
+        st.session_state.semantic_memory = []
 
 def embed_text(text):
     """Embed a piece of text using OpenAI's embedding model."""
-    response = embedding_client.embeddings.create(
-        model=embedding_model,
-        input=text
-    )
-    return response.data[0].embedding
+    try:
+        response = embedding_client.embeddings.create(
+            model=embedding_model,
+            input=text
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        print(f"Embedding error: {e}")
+        return None
 
 def save_message_embedding(role, message):
-    """Save a message (role + text + embedding) to semantic memory."""
+    """Save a message to in-memory semantic storage."""
     embedding = embed_text(message)
+    if embedding is None:
+        return  # Skip if embedding fails
+    
     record = {
         "role": role,
-        "message": message,  # Storing internally as 'message' for backward compatibility
-        "embedding": embedding
+        "message": message,
+        "embedding": np.array(embedding)
     }
-
-    try:
-        with open(SEMANTIC_MEMORY_FILE, "r") as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        data = []
-
-    data.append(record)
-
-    with open(SEMANTIC_MEMORY_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    st.session_state.semantic_memory.append(record)
+    
+    # Optional: Limit memory size to prevent memory issues
+    max_memory_size = 1000  # Keep last 1000 messages
+    if len(st.session_state.semantic_memory) > max_memory_size:
+        st.session_state.semantic_memory = st.session_state.semantic_memory[-max_memory_size:]
 
 def find_similar_messages(query, top_k=5):
     """Find top_k most semantically similar past messages."""
-    query_embedding = np.array(embed_text(query))
-
-    try:
-        with open(SEMANTIC_MEMORY_FILE, "r") as f:
-            records = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    if not st.session_state.semantic_memory:
         return []
-
+    
+    query_embedding = embed_text(query)
+    if query_embedding is None:
+        return []
+    
+    query_embedding = np.array(query_embedding)
+    
     similarities = []
-    for record in records:
-        record_embedding = np.array(record["embedding"])
-        similarity = cosine_similarity(query_embedding, record_embedding)
-        similarities.append((similarity, record))
-
+    for record in st.session_state.semantic_memory:
+        try:
+            similarity = cosine_similarity(query_embedding, record["embedding"])
+            similarities.append((similarity, record))
+        except Exception:
+            continue  # Skip corrupted records
+    
     # Sort by similarity descending
     similarities.sort(reverse=True, key=lambda x: x[0])
-
-    # Return top-k records, MAPPING 'message' to 'content' for OpenAI
-    top_records = [{"role": r["role"], "content": r["message"]} for _, r in similarities[:top_k]]
-    return top_records
+    
+    # Return top-k records in OpenAI chat format
+    return [{"role": r["role"], "content": r["message"]} for _, r in similarities[:top_k]]
 
 def cosine_similarity(a, b):
     """Compute cosine similarity between two vectors."""
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    try:
+        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    except:
+        return 0.0
 
 def clear_semantic_memory():
     """Clear semantic memory."""
-    with open(SEMANTIC_MEMORY_FILE, "w") as f:
-        json.dump([], f)
+    st.session_state.semantic_memory = []
